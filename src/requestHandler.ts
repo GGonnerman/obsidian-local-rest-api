@@ -3,6 +3,7 @@ import {
   App,
   CachedMetadata,
   Command,
+  parseLinktext,
   PluginManifest,
   prepareSimpleSearch,
   TFile,
@@ -679,25 +680,26 @@ export default class RequestHandler {
     res: express.Response,
   ): Promise<void> {
 
-    const linkToResolve = req.body.link;
+    const linktext = req.body.linktext;
     const currentPath = req.body.currentPath;
 
-    if (typeof (linkToResolve) === "undefined" || typeof (currentPath) === "undefined") {
+    if (typeof (linktext) === "undefined" || typeof (currentPath) === "undefined") {
       this.returnCannedResponse(res, { errorCode: ErrorCode.MissingParameter })
       return
     }
-    if (typeof linkToResolve != "string" || typeof currentPath !== "string") {
+    if (typeof linktext != "string" || typeof currentPath !== "string") {
       this.returnCannedResponse(res, {
         errorCode: ErrorCode.TextContentEncodingRequired,
       });
       return;
     }
+    const linkpath = parseLinktext(linktext).path;
 
 
-    const resolution: TFile = this.app.metadataCache.getFirstLinkpathDest(linkToResolve, currentPath);
-    const resolutionPath = resolution.path?.toString();
+    const resolution: TFile = this.app.metadataCache.getFirstLinkpathDest(linkpath, currentPath);
+    const resolutionPath = resolution?.path.toString();
 
-    if (resolutionPath === null) {
+    if (typeof (resolutionPath) === "undefined") {
       this.returnCannedResponse(res, { statusCode: 404 });
       return;
     }

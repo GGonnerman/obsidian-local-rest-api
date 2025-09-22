@@ -36,6 +36,7 @@ export const ERROR_CODE_MESSAGES: Record<ErrorCode, string> = {
     "The 'Target-Type' header you provided was invalid.",
   [ErrorCode.MissingTargetHeader]: "No 'Target' header was provided.",
   [ErrorCode.MissingOperation]: "No 'Operation' header was provided.",
+  [ErrorCode.MissingParameter]: "One or more required parameters were missing.",
   [ErrorCode.InvalidOperation]:
     "The 'Operation' header you provided was invalid.",
   [ErrorCode.PatchFailed]:

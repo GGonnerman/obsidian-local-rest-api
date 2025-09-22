@@ -674,6 +674,45 @@ export default class RequestHandler {
     return this._vaultDelete(path, req, res);
   }
 
+  async _resolvePost(
+    req: express.Request,
+    res: express.Response,
+  ): Promise<void> {
+
+    const linkToResolve = req.body.link;
+    const currentPath = req.body.currentPath;
+
+    if (typeof (linkToResolve) === "undefined" || typeof (currentPath) === "undefined") {
+      this.returnCannedResponse(res, { errorCode: ErrorCode.MissingParameter })
+      return
+    }
+    if (typeof linkToResolve != "string" || typeof currentPath !== "string") {
+      this.returnCannedResponse(res, {
+        errorCode: ErrorCode.TextContentEncodingRequired,
+      });
+      return;
+    }
+
+
+    const resolution: TFile = this.app.metadataCache.getFirstLinkpathDest(linkToResolve, currentPath);
+    const resolutionPath = resolution.path?.toString();
+
+    if (resolutionPath === null) {
+      this.returnCannedResponse(res, { statusCode: 404 });
+      return;
+    }
+
+    res.set({ "Content-Type": "Application/JSON" })
+    res.send(
+      JSON.stringify({ 'path': resolutionPath }, null, 2)
+    )
+    return;
+  }
+
+  async resolvePost(req: express.Request, res: express.Response): Promise<void> {
+    return this._resolvePost(req, res);
+  }
+
   getPeriodicNoteInterface(): Record<string, PeriodicNoteInterface> {
     return {
       daily: {

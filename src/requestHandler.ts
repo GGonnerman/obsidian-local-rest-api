@@ -1118,6 +1118,84 @@ export default class RequestHandler {
     }
   }
 
+  async searchAll(
+    req: express.Request,
+    res: express.Response
+  ): Promise<void> {
+
+    const query: string | undefined = req.body.query;
+    if (typeof (query) !== "string" && typeof (query) !== "undefined") {
+      this.returnCannedResponse(res, {
+        errorCode: ErrorCode.InvalidContentForContentType,
+      });
+      return;
+    }
+
+    let links: string[] = [];
+    const unresolvedLinks = this.app.metadataCache.unresolvedLinks;
+    for (const fileUnresolvedLinks in unresolvedLinks) {
+      // This will go through all markdown files, so we can add existing files
+      links.push(fileUnresolvedLinks)
+      for (const link in unresolvedLinks[fileUnresolvedLinks]) {
+        links.push(link);
+      }
+    }
+
+    if (typeof (query) === "string") {
+      links = links.filter(link => link.match(query))
+    }
+
+    res.send({
+      "links": links
+    })
+    return;
+  }
+
+  async searchHeaders(
+    req: express.Request,
+    res: express.Response
+  ): Promise<void> {
+
+    const unresolvedLinks = this.app.metadataCache.unresolvedLinks;
+    for (const r in unresolvedLinks) {
+      console.log(`[UNRESOLVED] ${r}: ${JSON.stringify(unresolvedLinks[r])}`)
+    }
+
+
+    const sourcepath: string | undefined = req.body.sourcepath;
+    const linkpath: string | undefined = req.body.linkpath;
+    const query: string = req.body.query || "";
+    console.debug(`${query}`)
+    const headers: string[] = []
+    let files: TFile[];
+    if (typeof (sourcepath) !== "string" || typeof (linkpath) !== "string") {
+      files = this.app.vault.getMarkdownFiles();
+    } else {
+      const searchResult = this.app.metadataCache.getFirstLinkpathDest(linkpath, sourcepath)
+      if (searchResult === null) {
+        this.returnCannedResponse(res, { "statusCode": 404 })
+      }
+      files = [searchResult];
+    }
+    for (const file of files) {
+      const cachedContents = await this.app.metadataCache.getFileCache(file)
+      headers.push(
+        ...cachedContents.headings.map((value: HeadingCache) => value.heading.toString())
+      );
+    }
+
+    if (headers.length === 0) {
+      this.returnCannedResponse(res, { statusCode: 404 })
+      return
+    }
+
+    res.send({
+      "matches": headers
+    })
+    return;
+
+  }
+
   async openPost(req: express.Request, res: express.Response): Promise<void> {
     const path = decodeURIComponent(
       req.path.slice(req.path.indexOf("/", 1) + 1)
@@ -1265,6 +1343,9 @@ export default class RequestHandler {
 
     this.api.route("/commands/").get(this.commandGet.bind(this));
     this.api.route("/commands/:commandId/").post(this.commandPost.bind(this));
+
+    this.api.route("/search/all/").post(this.searchAll.bind(this));
+    this.api.route("/search/headers/").post(this.searchHeaders.bind(this));
 
     this.api.route("/search/").post(this.searchQueryPost.bind(this));
     this.api.route("/search/simple/").post(this.searchSimplePost.bind(this));

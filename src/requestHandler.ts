@@ -1,26 +1,9 @@
-import {
-  apiVersion,
-  App,
-  CachedMetadata,
-  Command,
-  PluginManifest,
-  prepareSimpleSearch,
-  TFile,
-} from "obsidian";
-import periodicNotes from "obsidian-daily-notes-interface";
-import { getAPI as getDataviewAPI } from "obsidian-dataview";
-import forge from "node-forge";
-
-import express from "express";
-import http from "http";
-import cors from "cors";
-import mime from "mime-types";
 import bodyParser from "body-parser";
-import jsonLogic from "json-logic-js";
-import responseTime from "response-time";
-import queryString from "query-string";
+import cors from "cors";
+import express from "express";
 import WildcardRegexp from "glob-to-regexp";
-import path from "path";
+import http from "http";
+import jsonLogic from "json-logic-js";
 import {
   applyPatch,
   ContentType,
@@ -29,12 +12,38 @@ import {
   PatchOperation,
   PatchTargetType,
 } from "markdown-patch";
-
+import mime from "mime-types";
+import { HeadingCache } from "mocks/obsidian";
+import forge from "node-forge";
+import {
+  apiVersion,
+  App,
+  CachedMetadata,
+  Command,
+  PluginManifest,
+  prepareSimpleSearch,
+  TFile
+} from "obsidian";
+import periodicNotes from "obsidian-daily-notes-interface";
+import { getAPI as getDataviewAPI } from "obsidian-dataview";
+import path from "path";
+import queryString from "query-string";
+import responseTime from "response-time";
+// Import openapi.yaml as a string
+import openapiYaml from "../docs/openapi.yaml";
+import LocalRestApiPublicApi from "./api";
+import {
+  CERT_NAME,
+  ContentTypes,
+  ERROR_CODE_MESSAGES,
+  MaximumRequestSize,
+} from "./constants";
 import {
   CannedResponse,
   ErrorCode,
   ErrorResponseDescriptor,
   FileMetadataObject,
+  InternalSearchJsonResponseItem,
   LocalRestApiSettings,
   PeriodicNoteInterface,
   SearchContext,
@@ -48,16 +57,6 @@ import {
   getSplicePosition,
   toArrayBuffer,
 } from "./utils";
-import {
-  CERT_NAME,
-  ContentTypes,
-  ERROR_CODE_MESSAGES,
-  MaximumRequestSize,
-} from "./constants";
-import LocalRestApiPublicApi from "./api";
-
-// Import openapi.yaml as a string
-import openapiYaml from "../docs/openapi.yaml";
 
 export default class RequestHandler {
   app: App;
@@ -262,10 +261,10 @@ export default class RequestHandler {
       certificateInfo:
         this.requestIsAuthenticated(req) && certificate
           ? {
-              validityDays: getCertificateValidityDays(certificate),
-              regenerateRecommended:
-                !getCertificateIsUptoStandards(certificate),
-            }
+            validityDays: getCertificateValidityDays(certificate),
+            regenerateRecommended:
+              !getCertificateIsUptoStandards(certificate),
+          }
           : undefined,
       apiExtensions: this.requestIsAuthenticated(req)
         ? this.apiExtensions.map(({ manifest }) => manifest)
@@ -1075,7 +1074,7 @@ export default class RequestHandler {
         return results;
       },
       [ContentTypes.jsonLogic]: async () => {
-        const results: SearchJsonResponseItem[] = [];
+        const internalResults: InternalSearchJsonResponseItem[] = []
 
         for (const file of this.app.vault.getMarkdownFiles()) {
           const fileContext = await this.getFileMetadataObject(file);
@@ -1084,9 +1083,10 @@ export default class RequestHandler {
             const fileResult = jsonLogic.apply(req.body, fileContext);
 
             if (this.valueIsSaneTruthy(fileResult)) {
-              results.push({
+              internalResults.push({
                 filename: file.path,
                 result: fileResult,
+                url: typeof fileContext.frontmatter.url === "string" ? fileContext.frontmatter.url : undefined
               });
             }
           } catch (e) {
@@ -1094,7 +1094,10 @@ export default class RequestHandler {
           }
         }
 
-        return results;
+        internalResults.sort((a, b) => (
+          a.url.length - b.url.length
+        ))
+        return internalResults;
       },
     };
     const contentType = req.headers["content-type"];
@@ -1117,6 +1120,93 @@ export default class RequestHandler {
       return;
     }
   }
+
+  async searchQueriesPost(
+    req: express.Request,
+    res: express.Response
+  ): Promise<void> {
+    const dataviewApi = getDataviewAPI();
+
+    const handlers: Record<string, () => Promise<SearchJsonResponseItem[]>> = {
+      [ContentTypes.dataviewDql]: async () => {
+        const results: SearchJsonResponseItem[] = [];
+        const dataviewResults = await dataviewApi.tryQuery(req.body);
+
+        const fileColumn =
+          dataviewApi.evaluationContext.settings.tableIdColumnName;
+
+        if (dataviewResults.type !== "table") {
+          throw new Error("Only TABLE dataview queries are supported.");
+        }
+        if (!dataviewResults.headers.includes(fileColumn)) {
+          throw new Error("TABLE WITHOUT ID queries are not supported.");
+        }
+
+        for (const dataviewResult of dataviewResults.values) {
+          const fieldValues: Record<string, any> = {};
+
+          dataviewResults.headers.forEach((value: string, index: number) => {
+            if (value !== fileColumn) {
+              fieldValues[value] = dataviewResult[index];
+            }
+          });
+
+          results.push({
+            filename: dataviewResult[0].path,
+            result: fieldValues,
+          });
+        }
+
+        return results;
+      },
+      [ContentTypes.jsonLogic]: async () => {
+        const internalResults: InternalSearchJsonResponseItem[] = []
+
+        for (const file of this.app.vault.getMarkdownFiles()) {
+          const fileContext = await this.getFileMetadataObject(file);
+
+          try {
+            const fileResult = jsonLogic.apply(req.body, fileContext);
+
+            if (this.valueIsSaneTruthy(fileResult)) {
+              internalResults.push({
+                filename: file.path,
+                result: fileResult,
+                url: typeof fileContext.frontmatter.url === "string" ? fileContext.frontmatter.url : undefined
+              });
+            }
+          } catch (e) {
+            throw new Error(`${e.message} (while processing ${file.path})`);
+          }
+        }
+
+        internalResults.sort((a, b) => (
+          a.url.length - b.url.length
+        ))
+        return internalResults;
+      },
+    };
+    const contentType = req.headers["content-type"];
+
+    if (!handlers[contentType]) {
+      this.returnCannedResponse(res, {
+        errorCode: ErrorCode.ContentTypeSpecificationRequired,
+      });
+      return;
+    }
+
+    try {
+      const results = await handlers[contentType]();
+      res.json(results);
+    } catch (e) {
+      this.returnCannedResponse(res, {
+        errorCode: ErrorCode.InvalidFilterQuery,
+        message: `${e.message}`,
+      });
+      return;
+    }
+  }
+
 
   async searchAll(
     req: express.Request,
@@ -1348,6 +1438,7 @@ export default class RequestHandler {
     this.api.route("/search/headers/").post(this.searchHeaders.bind(this));
 
     this.api.route("/search/").post(this.searchQueryPost.bind(this));
+    this.api.route("/search/queries/").post(this.searchQueriesPost.bind(this));
     this.api.route("/search/simple/").post(this.searchSimplePost.bind(this));
 
     this.api.route("/open/*").post(this.openPost.bind(this));

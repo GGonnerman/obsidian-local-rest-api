@@ -4,7 +4,7 @@
 	"version": "3.2.0",
 	"minAppVersion": "0.12.0",
 	"description": "Get, change or otherwise interact with your notes in Obsidian via a REST API.",
-	"author": "Adam Coddington",
+	"author": "Adam Coddington and Gaston Gonnerman",
 	"authorUrl": "https://coddingtonbear.net/",
 	"isDesktopOnly": true
 }

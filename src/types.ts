@@ -143,6 +143,10 @@ export interface SearchJsonResponseItem {
   result: unknown;
 }
 
+export type InternalSearchJsonResponseItem = {
+  url: string;
+} & SearchJsonResponseItem;
+
 export interface FileMetadataObject {
   tags: string[];
   frontmatter: Record<string, unknown>;
